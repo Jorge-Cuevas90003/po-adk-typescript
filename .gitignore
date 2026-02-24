@@ -20,3 +20,6 @@ npm-debug.log*
 
 # ── TypeScript incremental cache ─────────────────────────────────────────────
 *.tsbuildinfo
+
+# ── AI assistant files ────────────────────────────────────────────────────────
+.claude/
