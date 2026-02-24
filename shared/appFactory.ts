@@ -35,18 +35,7 @@
  *   app.listen(8002);
  */
 
-import 'dotenv/config';
-
-// ── API key aliasing ───────────────────────────────────────────────────────────
-// The Python ADK uses GOOGLE_API_KEY; the TypeScript ADK requires
-// GOOGLE_GENAI_API_KEY (or GEMINI_API_KEY). Forward the value automatically so
-// both projects can share the same .env file without any changes.
-if (!process.env['GOOGLE_GENAI_API_KEY'] && !process.env['GEMINI_API_KEY']) {
-    const fallback = process.env['GOOGLE_API_KEY'];
-    if (fallback) {
-        process.env['GOOGLE_GENAI_API_KEY'] = fallback;
-    }
-}
+import './env.js';
 
 import express, { Application, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';

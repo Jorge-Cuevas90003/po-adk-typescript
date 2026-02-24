@@ -10,14 +10,14 @@
  * No FHIR context, no beforeModelCallback — the simplest possible example.
  */
 
-import 'dotenv/config';
+import '../shared/env.js';
 
 import { LlmAgent } from '@google/adk';
 import { getCurrentDatetime, lookUpIcd10 } from './tools/general.js';
 
 export const rootAgent = new LlmAgent({
     name: 'general_agent',
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     description:
         'General utility agent — provides current date/time and ICD-10-CM code lookups.',
     instruction: `You are a helpful medical assistant with access to date/time information

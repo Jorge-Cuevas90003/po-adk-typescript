@@ -12,7 +12,7 @@
  * AgentTool rather than connecting over HTTP.
  */
 
-import 'dotenv/config';
+import '../shared/env.js';
 
 import { LlmAgent, AgentTool } from '@google/adk';
 
@@ -25,7 +25,7 @@ const generalTool = new AgentTool({ agent: generalAgent });
 
 export const rootAgent = new LlmAgent({
     name: 'orchestrator',
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     description:
         'Orchestrator agent — routes requests to the appropriate specialist: healthcare or general.',
     instruction: `You are an orchestrating assistant that routes questions to the right specialist.

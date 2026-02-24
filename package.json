@@ -12,7 +12,9 @@
     "dev:orchestrator": "npx tsx orchestrator/server.ts",
     "start:healthcare": "node dist/healthcare_agent/server.js",
     "start:general": "node dist/general_agent/server.js",
-    "start:orchestrator": "node dist/orchestrator/server.js"
+    "start:orchestrator": "node dist/orchestrator/server.js",
+    "adk:web": "npm run build && npx adk web dist",
+    "adk:run": "npm run build && npx adk run dist"
   },
   "dependencies": {
     "@a2a-js/sdk": "^0.3.10",
@@ -22,6 +24,7 @@
     "uuid": "^11.0.0"
   },
   "devDependencies": {
+    "@google/adk-devtools": "^0.3.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",

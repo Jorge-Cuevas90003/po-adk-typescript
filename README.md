@@ -18,6 +18,7 @@ This is the **TypeScript companion** to [po-adk-python](https://github.com/your-
 - [Configuration reference](#configuration-reference)
 - [API security](#api-security)
 - [Testing locally](#testing-locally)
+- [ADK dev UI (adk web)](#adk-dev-ui-adk-web)
 - [Running with Docker](#running-with-docker-local)
 - [Deploying to Google Cloud Run](#deploying-to-google-cloud-run)
 - [Connecting to Prompt Opinion](#connecting-to-prompt-opinion)
@@ -131,7 +132,7 @@ npm run dev:general
 npm run dev:orchestrator
 ```
 
-> **Note:** The `dev:*` scripts use `tsx` to run TypeScript directly without a build step. For production use `npm run build` first, then `npm run start:*`.
+> **Note:** The `dev:*` scripts use `tsx` to run TypeScript directly without a build step. For production use `npm run build` first, then `npm run start:*`. For the browser-based ADK dev UI use `npm run adk:web` — see [ADK dev UI](#adk-dev-ui-adk-web) below.
 
 ### 5 — Verify an agent is running
 
@@ -190,10 +191,10 @@ Shows ADK's built-in sub-agent routing (`AgentTool`). Gemini decides which speci
 
 ```
 shared/
+├── env.ts            dotenv loader + GOOGLE_API_KEY → GOOGLE_GENAI_API_KEY alias
 ├── appFactory.ts     createA2aApp() — builds the A2A Express app for any agent
 ├── middleware.ts      apiKeyMiddleware() — API key enforcement
-├── fhirHook.ts        extractFhirContext() — before_model_callback for FHIR
-├── loggingUtils.ts    structured logging helpers
+├── fhirHook.ts        extractFhirContext() — beforeModelCallback for FHIR
 └── tools/
     ├── index.ts       re-exports all shared tools
     └── fhir.ts        FHIR R4 query tools
@@ -203,22 +204,27 @@ shared/
 
 ## Adding tools
 
-**Step 1** — Write the tool function in `general_agent/tools/general.ts`:
+Tools are created with `FunctionTool` from `@google/adk`. The `parameters` field takes a Zod schema that is converted to a JSON Schema for the model.
+
+**Step 1** — Write the tool in `general_agent/tools/general.ts`:
 
 ```typescript
-import { ToolContext } from '@google/adk';
+import { FunctionTool, ToolContext } from '@google/adk';
+import { z } from 'zod/v3';
 
-export function getCareTeam(
-  _params: Record<string, never>,
-  toolContext: ToolContext,
-): Record<string, unknown> {
-  const patientId = toolContext.state.get('patientId') ?? 'unknown';
-  console.info(`tool_get_care_team patientId=${patientId}`);
-  return { status: 'success', careTeam: [] };
-}
+export const getCareTeam = new FunctionTool({
+  name: 'getCareTeam',
+  description: 'Returns the care team for the current patient.',
+  parameters: z.object({}),
+  execute: (_input: unknown, toolContext?: ToolContext) => {
+    const patientId = toolContext?.state.get('patientId') ?? 'unknown';
+    console.info(`tool_get_care_team patientId=${patientId}`);
+    return { status: 'success', careTeam: [] };
+  },
+});
 ```
 
-**Step 2** — Export it from `tools/index.ts`:
+**Step 2** — Export it from `tools/index.ts` (if it belongs to shared tools):
 
 ```typescript
 export { getCurrentDatetime, lookUpIcd10, getCareTeam } from './general.js';
@@ -227,8 +233,8 @@ export { getCurrentDatetime, lookUpIcd10, getCareTeam } from './general.js';
 **Step 3** — Register it in `agent.ts`:
 
 ```typescript
-import { getCareTeam } from './tools/index.js';
-export const rootAgent = new Agent({ ..., tools: [..., getCareTeam] });
+import { getCareTeam } from './tools/general.js';
+export const rootAgent = new LlmAgent({ ..., tools: [..., getCareTeam] });
 ```
 
 ---
@@ -299,6 +305,33 @@ curl -X POST http://localhost:8001/ \
   -H "X-API-Key: my-secret-key-123" \
   -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"role":"user","parts":[{"kind":"text","text":"What medications is this patient on?"}],"metadata":{"https://your-workspace.promptopinion.ai/schemas/a2a/v1/fhir-context":{"fhirUrl":"https://your-fhir-server.example.org/r4","fhirToken":"<token>","patientId":"patient-uuid"}}}}}'
 ```
+
+---
+
+## ADK dev UI (`adk web`)
+
+The TypeScript ADK ships a browser-based dev UI for quickly chatting with an agent without a full A2A client. It is a **development/debugging tool only** — it bypasses Express and the A2A protocol entirely.
+
+```bash
+npm run adk:web   # builds TypeScript then opens the dev UI at http://localhost:8000
+npm run adk:run   # builds TypeScript then opens a terminal chat interface
+```
+
+`adk web` discovers all three agents automatically from the compiled `dist/` folder and shows them in a dropdown.
+
+> **Important — Python vs TypeScript `adk web`**
+>
+> If you have the Python ADK installed globally (via `pip install google-adk`), running `adk web` bare in your terminal will launch the **Python** version (using Uvicorn), which cannot load TypeScript agents. Always use `npm run adk:web` from this project to get the TypeScript version.
+
+### What works in the dev UI
+
+| Agent | Works in `adk web`? | Notes |
+|---|---|---|
+| `general_agent` | ✅ Fully | Date/time and ICD-10 tools work offline |
+| `healthcare_agent` | ⚠️ Partial | Agent loads, but FHIR tools return "no context" — no A2A metadata to carry credentials |
+| `orchestrator` | ⚠️ Partial | Routing works, but healthcare sub-agent hits the same FHIR context limitation |
+
+For full end-to-end testing including FHIR context, use the A2A endpoints (`npm run dev`) with a real A2A client such as Prompt Opinion or the curl examples below.
 
 ---
 

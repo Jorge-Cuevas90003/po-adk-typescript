@@ -9,7 +9,7 @@
  * credentials ever appearing in the LLM prompt.
  */
 
-import 'dotenv/config';
+import '../shared/env.js';
 
 import { LlmAgent } from '@google/adk';
 
@@ -23,7 +23,7 @@ import {
 
 export const rootAgent = new LlmAgent({
     name: 'healthcare_agent',
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     description:
         'Healthcare agent — queries a patient\'s FHIR R4 record: demographics, medications, conditions, and observations.',
     instruction: `You are a clinical assistant with secure access to a patient's FHIR R4 record.
