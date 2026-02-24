@@ -19,6 +19,9 @@ import {
     getActiveMedications,
     getActiveConditions,
     getRecentObservations,
+    getCarePlans,
+    getCareTeam,
+    getGoals,
 } from '../shared/tools/index.js';
 
 export const rootAgent = new LlmAgent({
@@ -45,6 +48,9 @@ FHIR context must be provided in the request metadata.`,
         getActiveMedications,
         getActiveConditions,
         getRecentObservations,
+        getCarePlans,
+        getCareTeam,
+        getGoals,
     ],
     // extractFhirContext runs before every LLM call and moves FHIR credentials
     // from A2A message metadata into session state where tools can read them.

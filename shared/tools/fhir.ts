@@ -315,3 +315,218 @@ export const getRecentObservations = new FunctionTool({
         }
     },
 });
+
+// ── Tool: care plans ───────────────────────────────────────────────────────────
+
+export const getCarePlans = new FunctionTool({
+    name: 'getCarePlans',
+    description:
+        "Retrieves the patient's active care plans from the FHIR server. " +
+        'Returns the plan title, category, period, narrative description, and the list ' +
+        'of planned activities / interventions within each plan. ' +
+        'No arguments required.',
+    parameters: z.object({}),
+    execute: async (_input: unknown, toolContext?: ToolContext) => {
+        if (!toolContext) return NO_CREDS_RESPONSE;
+        const creds = getFhirCredentials(toolContext);
+        if (!creds) return NO_CREDS_RESPONSE;
+
+        console.info(`tool_get_care_plans patient_id=${creds.patientId}`);
+        try {
+            const bundle = await fhirGet(creds, 'CarePlan', {
+                patient: creds.patientId,
+                status: 'active',
+                _count: '10',
+            }) as Record<string, unknown>;
+
+            const plans = ((bundle['entry'] as unknown[] | undefined) ?? []).map((entry: unknown) => {
+                const res = (entry as Record<string, unknown>)['resource'] as Record<string, unknown>;
+
+                // Category
+                const categories = ((res['category'] as unknown[] | undefined) ?? []).map((cat: unknown) => {
+                    const c = cat as Record<string, unknown>;
+                    return (c['text'] as string | undefined)
+                        ?? codingDisplay((c['coding'] as unknown[] | undefined) ?? []);
+                });
+
+                // Period
+                const period = res['period'] as Record<string, string> | undefined;
+
+                // Narrative description (text.div is HTML — strip tags for plain text)
+                const narrative = ((res['text'] as Record<string, string> | undefined) ?? {})['div'];
+                const description = narrative
+                    ? narrative.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500)
+                    : null;
+
+                // Activities
+                const activities = ((res['activity'] as unknown[] | undefined) ?? []).map((act: unknown) => {
+                    const a = act as Record<string, unknown>;
+                    const detail = (a['detail'] as Record<string, unknown> | undefined) ?? {};
+                    const code = (detail['code'] as Record<string, unknown> | undefined) ?? {};
+                    return {
+                        activity: (code['text'] as string | undefined)
+                            ?? codingDisplay((code['coding'] as unknown[] | undefined) ?? []),
+                        status: detail['status'] ?? null,
+                        description: detail['description'] ?? null,
+                    };
+                });
+
+                return {
+                    title: res['title'] ?? null,
+                    status: res['status'],
+                    categories,
+                    period_start: period?.['start'] ?? null,
+                    period_end: period?.['end'] ?? null,
+                    description,
+                    activity_count: activities.length,
+                    activities,
+                };
+            });
+
+            return { status: 'success', patient_id: creds.patientId, count: plans.length, care_plans: plans };
+        } catch (err) {
+            console.error(`tool_get_care_plans_error: ${String(err)}`);
+            return { status: 'error', error_message: String(err) };
+        }
+    },
+});
+
+// ── Tool: care team ────────────────────────────────────────────────────────────
+
+export const getCareTeam = new FunctionTool({
+    name: 'getCareTeam',
+    description:
+        "Retrieves the patient's active care team from the FHIR server. " +
+        'Returns each team member with their name, role, and organisation. ' +
+        'No arguments required.',
+    parameters: z.object({}),
+    execute: async (_input: unknown, toolContext?: ToolContext) => {
+        if (!toolContext) return NO_CREDS_RESPONSE;
+        const creds = getFhirCredentials(toolContext);
+        if (!creds) return NO_CREDS_RESPONSE;
+
+        console.info(`tool_get_care_team patient_id=${creds.patientId}`);
+        try {
+            const bundle = await fhirGet(creds, 'CareTeam', {
+                patient: creds.patientId,
+                status: 'active',
+            }) as Record<string, unknown>;
+
+            const teams = ((bundle['entry'] as unknown[] | undefined) ?? []).map((entry: unknown) => {
+                const res = (entry as Record<string, unknown>)['resource'] as Record<string, unknown>;
+
+                const participants = ((res['participant'] as unknown[] | undefined) ?? []).map((p: unknown) => {
+                    const part = p as Record<string, unknown>;
+
+                    // Role
+                    const roleCodings = (((part['role'] as unknown[] | undefined) ?? [])[0] as Record<string, unknown> | undefined) ?? {};
+                    const role = (roleCodings['text'] as string | undefined)
+                        ?? codingDisplay((roleCodings['coding'] as unknown[] | undefined) ?? []);
+
+                    // Member display name (Practitioner, RelatedPerson, Organization reference)
+                    const member = (part['member'] as Record<string, string> | undefined) ?? {};
+                    const name = member['display'] ?? 'Unknown';
+
+                    // Period
+                    const period = part['period'] as Record<string, string> | undefined;
+
+                    return { name, role, on_behalf_of: (part['onBehalfOf'] as Record<string, string> | undefined)?.['display'] ?? null, period_start: period?.['start'] ?? null };
+                });
+
+                return {
+                    team_name: res['name'] ?? null,
+                    status: res['status'],
+                    participant_count: participants.length,
+                    participants,
+                };
+            });
+
+            return { status: 'success', patient_id: creds.patientId, count: teams.length, care_teams: teams };
+        } catch (err) {
+            console.error(`tool_get_care_team_error: ${String(err)}`);
+            return { status: 'error', error_message: String(err) };
+        }
+    },
+});
+
+// ── Tool: goals ────────────────────────────────────────────────────────────────
+
+export const getGoals = new FunctionTool({
+    name: 'getGoals',
+    description:
+        "Retrieves the patient's active health goals from the FHIR server. " +
+        'Goals are typically linked to care plans and describe the outcomes the care team ' +
+        'is working toward (e.g. target HbA1c, weight reduction, smoking cessation). ' +
+        'Returns goal description, achievement status, and target dates. ' +
+        'No arguments required.',
+    parameters: z.object({}),
+    execute: async (_input: unknown, toolContext?: ToolContext) => {
+        if (!toolContext) return NO_CREDS_RESPONSE;
+        const creds = getFhirCredentials(toolContext);
+        if (!creds) return NO_CREDS_RESPONSE;
+
+        console.info(`tool_get_goals patient_id=${creds.patientId}`);
+        try {
+            const bundle = await fhirGet(creds, 'Goal', {
+                patient: creds.patientId,
+                'lifecycle-status': 'active',
+                _count: '20',
+            }) as Record<string, unknown>;
+
+            const goals = ((bundle['entry'] as unknown[] | undefined) ?? []).map((entry: unknown) => {
+                const res = (entry as Record<string, unknown>)['resource'] as Record<string, unknown>;
+
+                // Description
+                const descCode = (res['description'] as Record<string, unknown> | undefined) ?? {};
+                const description = (descCode['text'] as string | undefined)
+                    ?? codingDisplay((descCode['coding'] as unknown[] | undefined) ?? []);
+
+                // Achievement status
+                const achievementCode = (res['achievementStatus'] as Record<string, unknown> | undefined) ?? {};
+                const achievement = (achievementCode['text'] as string | undefined)
+                    ?? codingDisplay((achievementCode['coding'] as unknown[] | undefined) ?? []);
+
+                // Targets
+                const targets = ((res['target'] as unknown[] | undefined) ?? []).map((t: unknown) => {
+                    const tgt = t as Record<string, unknown>;
+                    const measure = (tgt['measure'] as Record<string, unknown> | undefined) ?? {};
+                    const detailQuantity = tgt['detailQuantity'] as Record<string, unknown> | undefined;
+                    const detailRange = tgt['detailRange'] as Record<string, unknown> | undefined;
+
+                    let detail: string | null = null;
+                    if (detailQuantity) {
+                        detail = `${detailQuantity['value']} ${detailQuantity['unit'] ?? ''}`.trim();
+                    } else if (detailRange) {
+                        const low = detailRange['low'] as Record<string, unknown> | undefined;
+                        const high = detailRange['high'] as Record<string, unknown> | undefined;
+                        detail = `${low?.['value'] ?? '?'} – ${high?.['value'] ?? '?'} ${low?.['unit'] ?? ''}`.trim();
+                    }
+
+                    return {
+                        measure: (measure['text'] as string | undefined)
+                            ?? codingDisplay((measure['coding'] as unknown[] | undefined) ?? []),
+                        detail,
+                        due_date: tgt['dueDate'] ?? null,
+                    };
+                });
+
+                return {
+                    description,
+                    lifecycle_status: res['lifecycleStatus'],
+                    achievement_status: achievement || null,
+                    start_date: res['startDate'] ?? null,
+                    targets,
+                    note: ((res['note'] as unknown[] | undefined) ?? [])
+                        .map((n: unknown) => (n as Record<string, string>)['text'])
+                        .filter(Boolean)
+                        .join(' ') || null,
+                };
+            });
+
+            return { status: 'success', patient_id: creds.patientId, count: goals.length, goals };
+        } catch (err) {
+            console.error(`tool_get_goals_error: ${String(err)}`);
+            return { status: 'error', error_message: String(err) };
+        }
+    },
+});

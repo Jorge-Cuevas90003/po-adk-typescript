@@ -11,4 +11,7 @@ export {
     getActiveMedications,
     getActiveConditions,
     getRecentObservations,
+    getCarePlans,
+    getCareTeam,
+    getGoals,
 } from './fhir.js';
