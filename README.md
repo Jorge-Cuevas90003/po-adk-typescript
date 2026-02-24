@@ -3,7 +3,7 @@
 
 Runnable examples showing how to build external agents that connect to **[Prompt Opinion](https://promptopinion.ai)** — the multi-agent platform for healthcare and enterprise workflows.
 
-This is the **TypeScript companion** to [po-adk-python](https://github.com/your-org/po-adk-python). It exposes the same three agents, the same A2A protocol endpoints, and the same FHIR credential flow — just written in TypeScript and runs on Node.js instead of Python/uvicorn.
+This is the **TypeScript companion** to [po-adk-python](https://github.com/prompt-opinion/po-adk-python). It exposes the same three agents, the same A2A protocol endpoints, and the same FHIR credential flow — just written in TypeScript and runs on Node.js instead of Python/uvicorn.
 
 ---
 
