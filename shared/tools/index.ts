@@ -15,3 +15,5 @@ export {
     getCareTeam,
     getGoals,
 } from './fhir.js';
+
+export { detectLabTrends, checkDrugInteractions } from './mcpProxies.js';
