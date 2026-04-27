@@ -17,7 +17,7 @@
 import 'dotenv/config';
 
 import { createA2aApp } from '../shared/appFactory.js';
-import { rootAgent } from './agent.js';
+import { buildRootAgent } from './agent.js';
 
 const PORT = Number(process.env['PORT'] ?? 8001);
 const URL = process.env['HEALTHCARE_AGENT_URL'] ?? `http://localhost:${PORT}`;
@@ -29,7 +29,9 @@ const URL = process.env['HEALTHCARE_AGENT_URL'] ?? `http://localhost:${PORT}`;
 const FHIR_EXTENSION = process.env['FHIR_EXTENSION_URI'] ?? 'http://localhost:5139/schemas/a2a/v1/fhir-context';
 
 const app = createA2aApp({
-    agent: rootAgent,
+    // Pass factory (not instance) so appFactory's key-rotation loop can
+    // construct a fresh agent per retry, picking up the rotated env var.
+    agent: buildRootAgent,
     name: 'healthcare_fhir_agent',
     description: (
         "A clinical assistant that queries a patient's FHIR health record to answer " +

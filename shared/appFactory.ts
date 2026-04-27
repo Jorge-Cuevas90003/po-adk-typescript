@@ -36,6 +36,7 @@
  */
 
 import './env.js';
+import { getApiKeys } from './env.js';
 
 import express, { Application, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
@@ -67,8 +68,14 @@ import { apiKeyMiddleware } from './middleware.js';
 // ── Options ────────────────────────────────────────────────────────────────────
 
 export interface CreateA2aAppOptions {
-    /** The ADK LlmAgent instance (rootAgent from agent.ts). */
-    agent: LlmAgent;
+    /**
+     * The ADK LlmAgent instance, OR a factory function that builds a fresh
+     * LlmAgent on demand. Pass a factory when you want per-request key rotation
+     * — the executor calls the factory with a new GOOGLE_GENAI_API_KEY in the
+     * environment so the underlying @google/genai client picks up the rotated
+     * key. For agents without rotation, pass the LlmAgent directly.
+     */
+    agent: LlmAgent | (() => LlmAgent);
     /** Agent name shown in the agent card and Prompt Opinion UI. */
     name: string;
     /** Short description of what this agent does. */
@@ -105,79 +112,91 @@ export interface CreateA2aAppOptions {
  *   3. Stream ADK Events, collect final model text.
  *   4. Publish one A2A Message reply and call eventBus.finished().
  */
-class AdkAgentExecutor implements AgentExecutor {
-    private readonly runner: Runner;
+/**
+ * Returns true if an event indicates the underlying Gemini call hit a
+ * RESOURCE_EXHAUSTED / 429 quota error. We check both errorCode and
+ * errorMessage because the ADK surfaces these slightly differently across
+ * versions.
+ */
+function isRateLimitEvent(event: {
+    errorCode?: string | number;
+    errorMessage?: string;
+}): boolean {
+    const code = String(event.errorCode ?? '');
+    const msg = String(event.errorMessage ?? '');
+    return (
+        code === '429' ||
+        /RESOURCE_EXHAUSTED/i.test(msg) ||
+        /exceeded your current quota/i.test(msg) ||
+        /generate_content_free_tier_requests/i.test(msg)
+    );
+}
 
-    constructor(agent: LlmAgent) {
-        this.runner = new Runner({
+interface RunResult {
+    agentText: string;
+    rateLimited: boolean;
+    errorMessage?: string;
+}
+
+class AdkAgentExecutor implements AgentExecutor {
+    private readonly agentSource: LlmAgent | (() => LlmAgent);
+    private readonly sessionService: InMemorySessionService;
+    private readonly appName: string;
+
+    constructor(agentSource: LlmAgent | (() => LlmAgent)) {
+        this.agentSource = agentSource;
+        this.sessionService = new InMemorySessionService();
+        // Pre-resolve once just to read the name for sessions.
+        const probe =
+            typeof agentSource === 'function' ? agentSource() : agentSource;
+        this.appName = probe.name;
+    }
+
+    private buildRunner(): Runner {
+        const agent =
+            typeof this.agentSource === 'function'
+                ? this.agentSource()
+                : this.agentSource;
+        return new Runner({
             agent,
-            appName: agent.name,
-            sessionService: new InMemorySessionService(),
+            appName: this.appName,
+            sessionService: this.sessionService,
         });
     }
 
-    async execute(
-        requestContext: RequestContext,
-        eventBus: ExecutionEventBus,
-    ): Promise<void> {
-        const { userMessage, contextId } = requestContext;
-
-        // Extract plain text from all text parts in the A2A message.
-        const userText = userMessage.parts
-            .filter((p): p is { kind: 'text'; text: string } => p.kind === 'text')
-            .map((p) => p.text)
-            .join('\n');
-
-        // Use contextId as session ID so conversation state persists across turns.
-        const sessionId = contextId;
-
-        // Ensure the session exists.
-        const existing = await this.runner.sessionService.getSession({
-            appName: this.runner.appName,
+    private async runOnce(
+        runner: Runner,
+        sessionId: string,
+        userText: string,
+        stateDelta: Record<string, unknown>,
+    ): Promise<RunResult> {
+        const eventStream = runner.runAsync({
             userId: 'a2a-user',
             sessionId,
-        });
-        if (!existing) {
-            await this.runner.sessionService.createSession({
-                appName: this.runner.appName,
-                userId: 'a2a-user',
-                sessionId,
-            });
-        }
-
-        // Bridge A2A message metadata (FHIR context) into ADK session state
-        // via stateDelta — fhirHook.ts also does this in the callback, but
-        // writing here ensures the values are available from the very first
-        // tool call even before beforeModelCallback fires.
-        // We write BOTH camelCase and snake_case keys for compatibility.
-        const a2aMetadata = (userMessage.metadata ?? {}) as Record<string, unknown>;
-        const stateDelta: Record<string, unknown> = { a2aMetadata };
-
-        for (const [key, value] of Object.entries(a2aMetadata)) {
-            if (key.includes('fhir-context') && value && typeof value === 'object') {
-                const fhir = value as Record<string, string>;
-                // camelCase — TypeScript convention
-                if (fhir['fhirUrl']) { stateDelta['fhirUrl'] = fhir['fhirUrl']; stateDelta['fhir_url'] = fhir['fhirUrl']; }
-                if (fhir['fhirToken']) { stateDelta['fhirToken'] = fhir['fhirToken']; stateDelta['fhir_token'] = fhir['fhirToken']; }
-                if (fhir['patientId']) { stateDelta['patientId'] = fhir['patientId']; stateDelta['patient_id'] = fhir['patientId']; }
-            }
-        }
-
-        // Run the ADK agent and collect the final text response.
-        const eventStream = this.runner.runAsync({
-            userId: 'a2a-user',
-            sessionId,
-            newMessage: {
-                role: 'user',
-                parts: [{ text: userText }],
-            },
+            newMessage: { role: 'user', parts: [{ text: userText }] },
             stateDelta,
         });
 
         let agentText = '';
+        let rateLimited = false;
+        let errorMessage: string | undefined;
+
         for await (const event of eventStream) {
-            // isFinalResponse() returns true on the last model event after all
-            // tool calls have been resolved — this is the text we want to return.
+            const evtAny = event as unknown as {
+                errorCode?: string | number;
+                errorMessage?: string;
+            };
+            if (evtAny.errorCode || evtAny.errorMessage) {
+                if (isRateLimitEvent(evtAny)) {
+                    rateLimited = true;
+                    errorMessage = evtAny.errorMessage;
+                    console.warn(
+                        `key_rotation_rate_limit_detected msg=${(evtAny.errorMessage ?? '').slice(0, 200)}`,
+                    );
+                    break;
+                }
+                errorMessage = evtAny.errorMessage;
+            }
             if (isFinalResponse(event) && event.content?.role === 'model') {
                 for (const part of event.content.parts ?? []) {
                     if ('text' in part && typeof part.text === 'string') {
@@ -187,19 +206,117 @@ class AdkAgentExecutor implements AgentExecutor {
             }
         }
 
-        // Publish the agent reply back to the A2A caller.
+        return { agentText, rateLimited, errorMessage };
+    }
+
+    async execute(
+        requestContext: RequestContext,
+        eventBus: ExecutionEventBus,
+    ): Promise<void> {
+        const { userMessage, contextId } = requestContext;
+
+        const userText = userMessage.parts
+            .filter((p): p is { kind: 'text'; text: string } => p.kind === 'text')
+            .map((p) => p.text)
+            .join('\n');
+
+        const sessionId = contextId;
+
+        const existing = await this.sessionService.getSession({
+            appName: this.appName,
+            userId: 'a2a-user',
+            sessionId,
+        });
+        if (!existing) {
+            await this.sessionService.createSession({
+                appName: this.appName,
+                userId: 'a2a-user',
+                sessionId,
+            });
+        }
+
+        const a2aMetadata = (userMessage.metadata ?? {}) as Record<string, unknown>;
+        const stateDelta: Record<string, unknown> = { a2aMetadata };
+
+        for (const [key, value] of Object.entries(a2aMetadata)) {
+            if (key.includes('fhir-context') && value && typeof value === 'object') {
+                const fhir = value as Record<string, string>;
+                if (fhir['fhirUrl']) { stateDelta['fhirUrl'] = fhir['fhirUrl']; stateDelta['fhir_url'] = fhir['fhirUrl']; }
+                if (fhir['fhirToken']) { stateDelta['fhirToken'] = fhir['fhirToken']; stateDelta['fhir_token'] = fhir['fhirToken']; }
+                if (fhir['patientId']) { stateDelta['patientId'] = fhir['patientId']; stateDelta['patient_id'] = fhir['patientId']; }
+            }
+        }
+
+        // ── Key rotation loop ──────────────────────────────────────────────
+        // Only meaningful when agentSource is a factory and >1 keys are
+        // configured. For static-agent + single-key setups the loop runs
+        // exactly once with the existing behavior.
+        const keys = getApiKeys();
+        const useRotation =
+            typeof this.agentSource === 'function' && keys.length > 0;
+
+        let result: RunResult = {
+            agentText: '',
+            rateLimited: false,
+            errorMessage: undefined,
+        };
+        let usedKeyIndex = -1;
+        const triedKeys: number[] = [];
+
+        if (useRotation) {
+            for (let i = 0; i < keys.length; i++) {
+                process.env['GOOGLE_GENAI_API_KEY'] = keys[i];
+                process.env['GEMINI_API_KEY'] = keys[i];
+                const runner = this.buildRunner();
+                console.info(
+                    `key_rotation_attempt index=${i} of=${keys.length}`,
+                );
+                triedKeys.push(i);
+                result = await this.runOnce(runner, sessionId, userText, stateDelta);
+                if (!result.rateLimited && (result.agentText || !result.errorMessage)) {
+                    usedKeyIndex = i;
+                    break;
+                }
+                if (!result.rateLimited) {
+                    // Non-rate-limit error — don't waste keys, surface it.
+                    break;
+                }
+            }
+        } else {
+            const runner = this.buildRunner();
+            result = await this.runOnce(runner, sessionId, userText, stateDelta);
+        }
+
+        // ── Build reply ────────────────────────────────────────────────────
+        let replyText: string;
+        if (result.agentText) {
+            replyText = result.agentText;
+            if (useRotation && usedKeyIndex >= 0) {
+                console.info(`key_rotation_success usedIndex=${usedKeyIndex}`);
+            }
+        } else if (useRotation && triedKeys.length === keys.length && result.rateLimited) {
+            replyText =
+                `All ${keys.length} configured Gemini API keys are currently rate-limited. ` +
+                `Free-tier quotas reset at midnight Pacific time. ` +
+                `Original error: ${result.errorMessage ?? 'RESOURCE_EXHAUSTED'}`;
+            console.warn(`key_rotation_all_exhausted tried=${keys.length}`);
+        } else if (result.errorMessage) {
+            replyText = `Agent error: ${result.errorMessage}`;
+        } else {
+            replyText = '(no response)';
+        }
+
         eventBus.publish({
             kind: 'message',
             messageId: uuidv4(),
             role: 'agent',
-            parts: [{ kind: 'text', text: agentText || '(no response)' }],
+            parts: [{ kind: 'text', text: replyText }],
             contextId,
         });
 
         eventBus.finished();
     }
 
-    // Not needed for non-streaming agents; required by the interface.
     cancelTask = async (): Promise<void> => { };
 }
 

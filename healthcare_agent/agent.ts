@@ -26,12 +26,24 @@ import {
     checkDrugInteractions,
 } from '../shared/tools/index.js';
 
-export const rootAgent = new LlmAgent({
-    name: 'healthcare_agent',
-    model: 'gemini-2.5-flash',
-    description:
-        'CareBridge healthcare agent — performs post-discharge surveillance by combining FHIR record review, lab trend detection, and drug-interaction screening.',
-    instruction: `You are CareBridge, a clinical surveillance assistant for the post-discharge period.
+/**
+ * Build a fresh LlmAgent. Used as a factory by appFactory's key rotation
+ * loop — each retry instantiates a new agent so the underlying @google/genai
+ * client picks up the rotated GOOGLE_GENAI_API_KEY from process.env.
+ */
+export function buildRootAgent(): LlmAgent {
+    return new LlmAgent({
+        name: 'healthcare_agent',
+        model: 'gemini-2.5-flash',
+        description:
+            'CareBridge healthcare agent — performs post-discharge surveillance by combining FHIR record review, lab trend detection, and drug-interaction screening.',
+        instruction: rootAgentInstruction,
+        tools: rootAgentTools,
+        beforeModelCallback: extractFhirContext,
+    });
+}
+
+const rootAgentInstruction = `You are CareBridge, a clinical surveillance assistant for the post-discharge period.
 You have secure access to a patient's FHIR R4 record AND to two specialized MCP servers:
   • detectLabTrends — flags significant changes in A1C, Creatinine, and Hemoglobin vs. baseline
   • checkDrugInteractions — screens active medications against the ONC High-Priority drug-drug interaction list
@@ -49,19 +61,22 @@ When the caller asks for a "post-discharge check", "surveillance", or "safety re
 
 When the caller asks a specific clinical question, choose the smallest set of tools needed.
 Always use the tools — never guess clinical values. Present findings concisely and in a tone
-appropriate for a clinical care team. If FHIR context is missing, say so explicitly.`,
-    tools: [
-        getPatientDemographics,
-        getActiveMedications,
-        getActiveConditions,
-        getRecentObservations,
-        getCarePlans,
-        getCareTeam,
-        getGoals,
-        detectLabTrends,
-        checkDrugInteractions,
-    ],
-    // extractFhirContext runs before every LLM call and moves FHIR credentials
-    // from A2A message metadata into session state where tools can read them.
-    beforeModelCallback: extractFhirContext,
-});
+appropriate for a clinical care team. If FHIR context is missing, say so explicitly.`;
+
+const rootAgentTools = [
+    getPatientDemographics,
+    getActiveMedications,
+    getActiveConditions,
+    getRecentObservations,
+    getCarePlans,
+    getCareTeam,
+    getGoals,
+    detectLabTrends,
+    checkDrugInteractions,
+];
+
+// Backwards-compat — preserved for adk:web/adk:run discovery and any caller
+// that imports rootAgent directly. Internally server.ts now uses
+// buildRootAgent() so that the appFactory key-rotation loop can construct
+// a fresh agent per retry attempt.
+export const rootAgent = buildRootAgent();
