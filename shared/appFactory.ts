@@ -371,6 +371,11 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
 
     const security = requireApiKey ? [{ apiKey: [] as string[] }] : undefined;
 
+    // Note: PO's strict A2A deserializer requires both supportedInterfaces
+    // (their naming) and additionalInterfaces (current @a2a-js/sdk field).
+    // We declare both — extra fields are ignored by spec-compliant clients.
+    const interfaces = [{ url, transport: 'JSONRPC' as const }];
+
     const agentCard: AgentCard = {
         name,
         description,
@@ -381,6 +386,7 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
         // this agent's main URL accepts. 'JSONRPC' means HTTP POST + JSON-RPC 2.0,
         // which is what @a2a-js/sdk's jsonRpcHandler implements.
         preferredTransport: 'JSONRPC',
+        additionalInterfaces: interfaces,
         defaultInputModes: ['text/plain'],
         defaultOutputModes: ['text/plain'],
         capabilities: {
@@ -393,6 +399,8 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
         ...(securitySchemes && { securitySchemes }),
         ...(security && { security }),
     };
+    // Inject supportedInterfaces too — required by PO's specific validator.
+    (agentCard as unknown as Record<string, unknown>).supportedInterfaces = interfaces;
 
     // ── Wire up A2A SDK ──────────────────────────────────────────────────────────
 
