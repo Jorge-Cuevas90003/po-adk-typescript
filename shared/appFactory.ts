@@ -373,8 +373,17 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
 
     // Note: PO's strict A2A deserializer requires both supportedInterfaces
     // (their naming) and additionalInterfaces (current @a2a-js/sdk field).
-    // We declare both — extra fields are ignored by spec-compliant clients.
-    const interfaces = [{ url, transport: 'JSONRPC' as const }];
+    // It also requires each AgentInterface entry to include protocolBinding
+    // and protocolVersion. We declare both fields — extra fields are ignored
+    // by spec-compliant clients.
+    const interfaces = [
+        {
+            url,
+            transport: 'JSONRPC' as const,
+            protocolBinding: 'JSONRPC',
+            protocolVersion: '0.3.0',
+        },
+    ];
 
     const agentCard: AgentCard = {
         name,
