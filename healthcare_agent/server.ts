@@ -40,7 +40,11 @@ const app = createA2aApp({
     url: URL,
     version: '1.0.0',
     fhirExtensionUri: FHIR_EXTENSION,
-    requireApiKey: true,   // Authenticated — callers must send X-API-Key
+    // Public External Agent — Prompt Opinion's external-agent registration
+    // doesn't read the X-API-Key security scheme so requests come through
+    // without auth headers. Free-tier deployment with rate-limited Gemini
+    // backend behind it means open access is acceptable for demo/judging.
+    requireApiKey: false,
 });
 
 app.listen(PORT, () => {
