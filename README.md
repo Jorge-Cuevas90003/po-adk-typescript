@@ -1,3 +1,20 @@
+# CareBridge Agent
+
+> **A2A agent for post-discharge clinical surveillance.**
+> Built for the [Agents Assemble — Healthcare AI Endgame](https://agents-assemble.devpost.com/) hackathon (Devpost, 2026).
+
+This is a fork of [`prompt-opinion/po-adk-typescript`](https://github.com/prompt-opinion/po-adk-typescript). The `healthcare_agent` is wired to the [CareBridge MCP server](https://github.com/Jorge-Cuevas90003/po-community-mcp) and adds two production features on top of the upstream template:
+
+1. **Three CareBridge surveillance tools** are bridged into the agent via `shared/tools/mcpProxies.ts`. The agent forwards FHIR context (URL, patient ID, optional bearer token) from A2A message metadata to the MCP as request headers — credentials never appear in the LLM prompt.
+2. **Automatic API key rotation** on `429 RESOURCE_EXHAUSTED`. When the active Google AI Studio free-tier key hits its 20 RPD cap, the agent silently rotates to the next configured key (`GOOGLE_API_KEY_1` … `GOOGLE_API_KEY_9` or `GOOGLE_API_KEYS=key1,key2,…`) without disrupting the A2A caller.
+
+Public deployment: `https://carebridge-agent.onrender.com`
+Sister MCP: `https://carebridge-mcp.onrender.com/mcp`
+
+The original upstream documentation continues below — it covers the three example agents, ADK setup, and Docker/Cloud Run deployment.
+
+---
+
 # ── Prompt Opinion Agent Examples (TypeScript)
 ### Built with Google ADK · A2A Protocol · TypeScript
 
